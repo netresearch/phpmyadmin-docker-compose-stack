@@ -175,18 +175,20 @@ jobs:
             -X POST -d "pma_username=root&pma_password=smoke-test-only&server=1&target=index.php&token=$token" \
             http://127.0.0.1:8080/index.php
 
-          # Assert on the absence of the login form rather than on a phrase
-          # from the authenticated page: the wording there depends on the
-          # phpMyAdmin version and the negotiated language, and a rolling
-          # build that resolves a newer twig renders it differently.
-          page=$(curl -sS -b "$jar" http://127.0.0.1:8080/index.php)
+          # Assert on the absence of the login form, not on a phrase from the
+          # authenticated page: that wording depends on the phpMyAdmin version
+          # and the negotiated language. Rejected credentials re-render the
+          # form, so its presence is the discriminator — verified both ways:
+          # the unauthenticated page carries `name="pma_username"` exactly
+          # once, the authenticated one not at all.
+          page=$(curl -sS -b "$jar" -w '\n%{http_code}' http://127.0.0.1:8080/index.php)
+          code=${page##*$'\n'}
+          [ "$code" = "200" ] || { echo "::error::authenticated page returned $code"; exit 1; }
           if printf '%s' "$page" | grep -q 'name="pma_username"'; then
-            echo "::error::still on the login form — the login was rejected"
+            echo "::error::still on the login form — the credentials were rejected"
             printf '%s' "$page" | grep -oE 'class="alert[^"]*"[^<]*<[^>]*>[^<]{0,200}' | head -3
             exit 1
           fi
-          printf '%s' "$page" | grep -q 'token=' \
-            || { echo "::error::authenticated page carries no session token"; exit 1; }
           echo "logged in against the database"
 
       - name: php-fpm endpoints are not public
