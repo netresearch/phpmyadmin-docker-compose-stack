@@ -90,7 +90,11 @@ jobs:
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          # A pull request builds one architecture and keeps it local: `--load`
+          # cannot import a manifest list, so asking for both there fails with
+          # "docker exporter does not currently support exporting manifest
+          # lists" before a single layer is built.
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -104,8 +108,10 @@ jobs:
             VCS_REF=${{ github.sha }}
           # The SBOM and provenance attestations travel with the manifest, so
           # a consumer can ask the registry what is inside the image it pulled.
-          sbom: true
-          provenance: mode=max
+          # Both need an exporter that writes a manifest, which the local
+          # `--load` on pull requests is not.
+          sbom: ${{ github.event_name != 'pull_request' }}
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
 
       - name: Attest the build
         if: github.event_name != 'pull_request'
@@ -168,10 +174,19 @@ jobs:
           curl -sS -b "$jar" -c "$jar" -o /dev/null \
             -X POST -d "pma_username=root&pma_password=smoke-test-only&server=1&target=index.php&token=$token" \
             http://127.0.0.1:8080/index.php
-          # The authenticated page names the server it is connected to; a
-          # failed login would render the form again instead.
-          curl -sS -b "$jar" http://127.0.0.1:8080/index.php | grep -q 'db via TCP/IP' \
-            || { echo "::error::login did not reach the database"; exit 1; }
+
+          # Assert on the absence of the login form rather than on a phrase
+          # from the authenticated page: the wording there depends on the
+          # phpMyAdmin version and the negotiated language, and a rolling
+          # build that resolves a newer twig renders it differently.
+          page=$(curl -sS -b "$jar" http://127.0.0.1:8080/index.php)
+          if printf '%s' "$page" | grep -q 'name="pma_username"'; then
+            echo "::error::still on the login form — the login was rejected"
+            printf '%s' "$page" | grep -oE 'class="alert[^"]*"[^<]*<[^>]*>[^<]{0,200}' | head -3
+            exit 1
+          fi
+          printf '%s' "$page" | grep -q 'token=' \
+            || { echo "::error::authenticated page carries no session token"; exit 1; }
           echo "logged in against the database"
 
       - name: php-fpm endpoints are not public
