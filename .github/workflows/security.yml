@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Netresearch DTT GmbH
+#
+# Scans the published images. Runs after the daily build so the numbers in the
+# README stay checkable rather than aspirational.
+
+name: security
+
+on:
+  workflow_run:
+    workflows: [build]
+    types: [completed]
+  schedule:
+    - cron: '30 5 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  trivy:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [latest, latest-rolling]
+    uses: netresearch/.github/.github/workflows/security-container.yml@main
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    with:
+      image-ref: ghcr.io/${{ github.repository_owner }}/phpmyadmin-php-fpm:${{ matrix.tag }}
+      sarif-category: trivy-${{ matrix.tag }}

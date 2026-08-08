@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Netresearch DTT GmbH
+
+name: pr-quality
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  pr-quality:
+    uses: netresearch/.github/.github/workflows/pr-quality.yml@main
+    permissions:
+      contents: read
+      pull-requests: read

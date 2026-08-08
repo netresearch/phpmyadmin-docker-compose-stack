@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Netresearch DTT GmbH
+#
+# The whole stack: phpMyAdmin on php-fpm, nginx in front, and a MariaDB to
+# point it at. Consumers who already run a database — the usual case, this is
+# an admin UI for something that exists — start only what they need:
+#
+#   docker compose up -d app-assets app web
+#
+# Less than that is fine too: the `app` image works on its own for anyone who
+# already runs a web server, which is how the netresearch.de stack uses it.
+
+name: phpmyadmin
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  app:
+    image: ghcr.io/netresearch/phpmyadmin-php-fpm:${PMA_IMAGE_TAG:-latest}
+    build:
+      context: .
+      args:
+        PHP_VERSION: ${PHP_VERSION:-8.4}
+        PMA_VERSION: ${PMA_VERSION:-5.2.3}
+    logging: *default-logging
+    environment:
+      PMA_HOST: ${PMA_HOST:-db}
+      PMA_PORT: ${PMA_PORT:-3306}
+      # Keeps sessions alive across restarts. Generate once:
+      #   tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
+      PMA_BLOWFISH_SECRET: ${PMA_BLOWFISH_SECRET:-}
+      PMA_ABSOLUTE_URI: ${PMA_ABSOLUTE_URI:-}
+      UPLOAD_LIMIT: ${UPLOAD_LIMIT:-256M}
+      MEMORY_LIMIT: ${MEMORY_LIMIT:-512M}
+      MAX_EXECUTION_TIME: ${MAX_EXECUTION_TIME:-600}
+    volumes:
+      # phpMyAdmin's scratch space, and where a generated blowfish secret is
+      # kept so it survives a restart. php-fpm reads the application code from
+      # its own image layer, so nothing else needs to be shared with it.
+      - pma-tmp:/var/www/html/tmp
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # nginx serves phpMyAdmin's static files itself instead of routing every
+  # asset through php-fpm, so it needs the same tree. Copying it on every
+  # start — rather than letting Docker seed an empty volume once — is what
+  # makes an image upgrade actually reach nginx: a volume seeded at creation
+  # would keep serving the old release forever.
+  app-assets:
+    image: ghcr.io/netresearch/phpmyadmin-php-fpm:${PMA_IMAGE_TAG:-latest}
+    logging: *default-logging
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -eu
+        STAGE=/shared-html/.new
+        rm -rf "$$STAGE"; mkdir -p "$$STAGE"
+        # tmp/ is the app's own writable volume and must not be copied.
+        find /var/www/html -mindepth 1 -maxdepth 1 ! -name tmp \
+          -exec cp -a {} "$$STAGE"/ \;
+        # Swap entry by entry: mv within one mount is rename(2), so a request
+        # arriving mid-sync sees either the old or the new file, never half.
+        for entry in "$$STAGE"/* "$$STAGE"/.[!.]*; do
+          [ -e "$$entry" ] || continue
+          name=$$(basename "$$entry")
+          rm -rf "/shared-html/$$name"
+          mv "$$entry" "/shared-html/$$name"
+        done
+        rm -rf "$$STAGE"
+        echo "[app-assets] synced $$(ls /shared-html | wc -l) entries"
+    volumes:
+      - pma-html:/shared-html
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    image: nginx:${NGINX_VERSION:-1.29-alpine}
+    logging: *default-logging
+    depends_on:
+      app-assets:
+        condition: service_completed_successfully
+      app:
+        condition: service_healthy
+    environment:
+      PMA_FPM_UPSTREAM: ${PMA_FPM_UPSTREAM:-app:9000}
+    ports:
+      - "${PMA_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/templates:/etc/nginx/templates:ro
+      - ./config/nginx/snippets:/etc/nginx/snippets:ro
+      - pma-html:/var/www/html:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # Only for running this stack standalone. Point PMA_HOST at your own
+  # database and leave this one out.
+  db:
+    image: ${DB_IMAGE:-mariadb}:${DB_IMAGE_VERSION:-11.8}
+    logging: *default-logging
+    profiles: ["standalone"]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?set MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-demo}
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  pma-tmp:
+  pma-html:
+  db-data:

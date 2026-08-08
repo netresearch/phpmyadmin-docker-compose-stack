@@ -1,0 +1,5 @@
+ignored:
+  # Pinning apk versions in an image whose entire purpose is to rebuild
+  # against current packages would defeat the point.
+  - DL3018
+failure-threshold: warning

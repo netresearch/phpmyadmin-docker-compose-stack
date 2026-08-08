@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Netresearch DTT GmbH
+
+#
+# Rendered by the nginx image entrypoint: files under /etc/nginx/templates are
+# passed through envsubst, which only replaces variables that are actually set
+# in the environment — nginx's own $uri, $document_root and friends survive.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+
+    root /var/www/html;
+    index index.php;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # phpMyAdmin ships large translation and library trees; the import path
+    # takes whatever upload_max_filesize allows.
+    client_max_body_size 256M;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location ~ ^/(ping|status)$ {
+        # php-fpm's own endpoints, for a healthcheck or a metrics scrape.
+        # Loopback only: in Docker every request through a published port
+        # arrives from the bridge gateway, so allowing the private ranges —
+        # the obvious-looking way to permit "the compose network" — would
+        # hand these to anyone who can reach the port.
+        allow 127.0.0.1;
+        allow ::1;
+        deny all;
+        fastcgi_pass ${PMA_FPM_UPSTREAM};
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $fastcgi_script_name;
+    }
+
+    location ~ \.php$ {
+        try_files $uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass ${PMA_FPM_UPSTREAM};
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+        # Imports and exports of large dumps outlive the default 60s.
+        fastcgi_read_timeout 600s;
+    }
+
+    # Nothing below these paths is meant to be fetched over HTTP.
+    location ~ ^/(libraries|templates|vendor|tmp)/ {
+        deny all;
+        return 404;
+    }
+
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
+}

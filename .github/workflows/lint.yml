@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Netresearch DTT GmbH
+#
+# Static checks. The Dockerfile and shell linting come from the shared
+# reusable so the ruleset stays identical across our container repos; the
+# compose validation stays here because it needs this repo's own placeholders.
+
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  container-lint:
+    uses: netresearch/.github/.github/workflows/lint-container.yml@main
+    permissions:
+      contents: read
+    with:
+      shell-scandirs: ./rootfs/usr/local/bin
+
+  compose-validate:
+    name: docker compose config
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Validate compose.yml
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # The demo profile refuses to render without a database password,
+          # which is the point of it being required — supply a throwaway one
+          # so the validation exercises every service.
+          printf 'MARIADB_ROOT_PASSWORD=validate-only\n' >> .env
+          docker compose config -q
+          docker compose --profile standalone config -q
+
+      - name: Validate the overlays
+        run: |
+          set -euo pipefail
+          PMA_PUBLIC_HOST=pma.example.org \
+          PMA_BASICAUTH='user:$$apr1$$placeholder' \
+            docker compose -f compose.yml -f examples/compose.traefik.yml config -q

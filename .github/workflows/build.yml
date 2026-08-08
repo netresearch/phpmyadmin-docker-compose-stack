@@ -1,0 +1,187 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Netresearch DTT GmbH
+#
+# The daily rebuild is the whole point of this repository: upstream refreshes
+# its image when phpMyAdmin is released, we refresh ours when its base picks up
+# fixes. Two variants per run — `pinned` ships the libraries as released,
+# `rolling` refreshes them within phpMyAdmin's own constraints.
+
+name: build
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC, before the workday
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'examples/**'
+      - '**.md'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/phpmyadmin-php-fpm
+
+permissions: {}
+
+concurrency:
+  group: build-${{ github.ref }}
+  # A scheduled multi-arch rebuild must not be interrupted half-pushed.
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+jobs:
+  build:
+    name: ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: pinned
+            rolling: "false"
+            suffix: ""
+          - variant: rolling
+            rolling: "true"
+            suffix: "-rolling"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned phpMyAdmin release
+        id: version
+        run: echo "pma=$(cat .phpmyadmin-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      # Pushing only happens from main and the schedule: a pull request must be
+      # able to prove the image still builds without being able to publish it.
+      - name: Log in to the registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5.8.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=${{ matrix.suffix }},onlatest=true
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.pma }},enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.pma }}-{{date 'YYYYMMDD'}},enable={{is_default_branch}}
+            type=ref,event=pr
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+          build-args: |
+            PMA_VERSION=${{ steps.version.outputs.pma }}
+            ROLLING_DEPS=${{ matrix.rolling }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            VCS_REF=${{ github.sha }}
+          # The SBOM and provenance attestations travel with the manifest, so
+          # a consumer can ask the registry what is inside the image it pulled.
+          sbom: true
+          provenance: mode=max
+
+      - name: Attest the build
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # Proves the image actually serves phpMyAdmin, not merely that it built.
+  # A dependency refresh that breaks the application would pass every static
+  # check and fail here.
+  smoke-test:
+    name: smoke test (${{ matrix.variant }})
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [pinned, rolling]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start the stack
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          {
+            echo "MARIADB_ROOT_PASSWORD=smoke-test-only"
+            echo "PMA_BLOWFISH_SECRET=smoketestsmoketestsmoketest12345"
+            if [ "${{ matrix.variant }}" = "rolling" ]; then
+              echo "PMA_IMAGE_TAG=latest-rolling"
+            fi
+          } >> .env
+          docker compose --profile standalone up -d --wait --wait-timeout 300
+
+      - name: phpMyAdmin answers and logs in
+        run: |
+          set -euo pipefail
+          jar=$(mktemp)
+          code=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)
+          [ "$code" = "200" ] || { echo "::error::login page returned $code"; exit 1; }
+
+          token=$(curl -sS -c "$jar" http://127.0.0.1:8080/index.php \
+            | grep -oE 'name="token" value="[^"]+"' | head -1 | sed 's/.*value="//;s/"//')
+          [ -n "$token" ] || { echo "::error::no CSRF token in the login form"; exit 1; }
+
+          curl -sS -b "$jar" -c "$jar" -o /dev/null \
+            -X POST -d "pma_username=root&pma_password=smoke-test-only&server=1&target=index.php&token=$token" \
+            http://127.0.0.1:8080/index.php
+          # The authenticated page names the server it is connected to; a
+          # failed login would render the form again instead.
+          curl -sS -b "$jar" http://127.0.0.1:8080/index.php | grep -q 'db via TCP/IP' \
+            || { echo "::error::login did not reach the database"; exit 1; }
+          echo "logged in against the database"
+
+      - name: php-fpm endpoints are not public
+        run: |
+          set -euo pipefail
+          for path in ping status; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/$path")
+            [ "$code" = "403" ] || { echo "::error::/$path answered $code, expected 403"; exit 1; }
+          done
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose --profile standalone logs

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Netresearch DTT GmbH
+schemaVersion: 2.0.0
+
+commandTests:
+  - name: "php has the extensions phpMyAdmin needs"
+    command: "sh"
+    args: ["-c", "php -m | tr '\\n' ' '"]
+    expectedOutput: [".*mysqli.*", ".*gd.*", ".*intl.*", ".*zip.*", ".*sodium.*"]
+
+  - name: "the application parses"
+    command: "php"
+    args: ["-l", "/var/www/html/index.php"]
+    expectedOutput: ["No syntax errors detected.*"]
+
+  - name: "runs unprivileged"
+    command: "id"
+    args: ["-un"]
+    expectedOutput: ["www-data"]
+
+fileExistenceTests:
+  - name: "entrypoint"
+    path: "/usr/local/bin/entrypoint.sh"
+    shouldExist: true
+    permissions: "-rwxr-xr-x"
+
+  - name: "the setup wizard is gone"
+    path: "/var/www/html/setup"
+    shouldExist: false
+
+  - name: "the scratch directory belongs to the runtime user"
+    path: "/var/www/html/tmp"
+    shouldExist: true
+    uid: 82
+    gid: 82
+
+metadataTest:
+  user: "www-data"
+  workdir: "/var/www/html"
+  exposedPorts: ["9000"]
+  entrypoint: ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+  cmd: ["php-fpm", "--nodaemonize"]

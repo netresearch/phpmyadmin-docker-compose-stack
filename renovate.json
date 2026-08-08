@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>netresearch/renovate-config"],
+  "packageRules": [
+    {
+      "description": "phpMyAdmin releases are pinned in .phpmyadmin-version together with the tarball checksum in the Dockerfile. Renovate cannot compute that checksum, so the release is bumped by hand and Renovate is kept out of it.",
+      "matchPackageNames": ["phpmyadmin/phpmyadmin"],
+      "enabled": false
+    }
+  ]
+}

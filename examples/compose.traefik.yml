@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Netresearch DTT GmbH
+#
+# Publishes the stack through an existing Traefik instead of a host port:
+#   docker compose -f compose.yml -f examples/compose.traefik.yml up -d
+#
+# phpMyAdmin is an administrative interface for a database. Putting it on the
+# public internet behind nothing but Traefik's basic-auth middleware is a
+# decision, not a default — prefer an internal entrypoint or an IP allow-list.
+
+services:
+  web:
+    ports: !reset []
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.phpmyadmin.rule=Host(`${PMA_PUBLIC_HOST:?set PMA_PUBLIC_HOST}`)
+      - traefik.http.routers.phpmyadmin.entrypoints=websecure
+      - traefik.http.routers.phpmyadmin.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      - traefik.http.services.phpmyadmin.loadbalancer.server.port=80
+      - traefik.http.routers.phpmyadmin.middlewares=phpmyadmin-auth@docker
+      # htpasswd -nB admin  — the $ signs must be doubled in compose
+      - traefik.http.middlewares.phpmyadmin-auth.basicauth.users=${PMA_BASICAUTH:?set PMA_BASICAUTH}
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik}
+    networks:
+      - default
+      - traefik
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}
