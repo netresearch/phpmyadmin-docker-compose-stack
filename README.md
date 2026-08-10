@@ -50,7 +50,7 @@ PMA_HOST=your-db-host docker compose up -d app-assets app web
 | Image | What it is |
 |---|---|
 | `ghcr.io/netresearch/phpmyadmin-php-fpm` | php-fpm on 9000, serves no HTTP |
-| `ghcr.io/netresearch/phpmyadmin-nginx` | nginx on 80 with the configuration and the document root baked in |
+| `ghcr.io/netresearch/phpmyadmin-nginx` | nginx on 8080 with the configuration and the document root baked in, running as an unprivileged user |
 
 **Deploy both at the same tag.** They share the document root, which is copied
 from one build stage into both, so mixing tags means running two phpMyAdmin
@@ -70,7 +70,7 @@ services:
     environment:
       PMA_FPM_UPSTREAM: pma-fpm:9000
     ports:
-      - "8080:80"
+      - "8080:8080"
 ```
 
 ## Using only the php-fpm image
