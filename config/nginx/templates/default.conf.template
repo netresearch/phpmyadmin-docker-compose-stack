@@ -6,8 +6,10 @@
 # passed through envsubst, which only replaces variables that are actually set
 # in the environment — nginx's own $uri, $document_root and friends survive.
 server {
-    listen 80;
-    listen [::]:80;
+    # 8080, not 80: the image runs as an unprivileged user and a
+    # port below 1024 needs a capability it deliberately does not have.
+    listen 8080;
+    listen [::]:8080;
     server_name _;
 
     root /var/www/html;
