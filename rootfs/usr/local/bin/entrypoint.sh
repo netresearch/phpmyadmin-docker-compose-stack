@@ -28,6 +28,11 @@ PMA_HOST=${PMA_HOST:-db}
 PMA_PORT=${PMA_PORT:-3306}
 PMA_ABSOLUTE_URI=${PMA_ABSOLUTE_URI:-}
 PMA_ARBITRARY=${PMA_ARBITRARY:-0}
+# Upstream's auto-login pair. Both set switches the server to config auth,
+# which puts the credentials in the generated config file — sensible for a
+# local database, not for anything reachable by others.
+PMA_USER=${PMA_USER:-}
+PMA_PASSWORD=${PMA_PASSWORD:-}
 UPLOAD_LIMIT=${UPLOAD_LIMIT:-256M}
 MEMORY_LIMIT=${MEMORY_LIMIT:-512M}
 MAX_EXECUTION_TIME=${MAX_EXECUTION_TIME:-600}
@@ -59,7 +64,20 @@ else
     fi
 fi
 
-log "writing $CONFIG (host $PMA_HOST:$PMA_PORT, arbitrary=$PMA_ARBITRARY)"
+# Cookie auth asks for credentials; config auth carries them. Only the pair
+# switches — one of the two alone would produce a login that cannot succeed.
+AUTH_TYPE=cookie
+if [ -n "$PMA_USER" ] && [ -n "$PMA_PASSWORD" ]; then
+    AUTH_TYPE=config
+    log "PMA_USER and PMA_PASSWORD are set: using config auth. The credentials"
+    log "land in $CONFIG — intended for a local database, not a shared one."
+elif [ -n "$PMA_USER" ] || [ -n "$PMA_PASSWORD" ]; then
+    log "only one of PMA_USER/PMA_PASSWORD is set — ignoring both, staying on cookie auth"
+    PMA_USER=""
+    PMA_PASSWORD=""
+fi
+
+log "writing $CONFIG (host $PMA_HOST:$PMA_PORT, auth $AUTH_TYPE, arbitrary=$PMA_ARBITRARY)"
 cat > "$CONFIG" <<PHPCONF
 <?php
 declare(strict_types=1);
@@ -74,7 +92,7 @@ ${MARKER}
 \$i = 1;
 \$cfg['Servers'][\$i]['host']           = '${PMA_HOST}';
 \$cfg['Servers'][\$i]['port']           = '${PMA_PORT}';
-\$cfg['Servers'][\$i]['auth_type']      = 'cookie';
+\$cfg['Servers'][\$i]['auth_type']      = '${AUTH_TYPE}';
 \$cfg['Servers'][\$i]['AllowNoPassword'] = false;
 // Arbitrary-server mode lets anyone reaching this UI point it at any host
 // the container can route to. Off unless asked for.
@@ -89,6 +107,14 @@ ${MARKER}
 \$cfg['ShowPhpInfo']   = false;
 \$cfg['SendErrorReports'] = 'never';
 PHPCONF
+
+# Appended rather than interpolated above, so the password never reaches the
+# here-document that is written unconditionally — and so a config without the
+# pair carries no empty credential lines at all.
+if [ "$AUTH_TYPE" = "config" ]; then
+    printf "\$cfg['Servers'][\$i]['user']     = '%s';\n" "$PMA_USER" >> "$CONFIG"
+    printf "\$cfg['Servers'][\$i]['password'] = '%s';\n" "$PMA_PASSWORD" >> "$CONFIG"
+fi
 
 if [ -n "$PMA_ABSOLUTE_URI" ]; then
     printf "\$cfg['PmaAbsoluteUri'] = '%s';\n" "$PMA_ABSOLUTE_URI" >> "$CONFIG"
