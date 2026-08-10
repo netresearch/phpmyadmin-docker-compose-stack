@@ -194,7 +194,7 @@ CMD ["php-fpm", "--nodaemonize"]
 # its master process as root, which the php-fpm stage above deliberately
 # does not, and SonarCloud flags it as docker:S6471. This one runs as uid
 # 101 throughout, which is why the server block listens on 8080.
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS web
+FROM nginxinc/nginx-unprivileged:1.30-alpine AS web
 
 ARG PMA_VERSION=5.2.3
 ARG BUILD_DATE
