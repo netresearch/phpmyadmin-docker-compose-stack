@@ -1,2 +1,6 @@
+# Deny everything, then name what a stage actually copies. rootfs/ goes into
+# the php-fpm runtime, config/nginx/ into the web stage — nothing else belongs
+# in the build context.
 *
 !rootfs/
+!config/nginx/

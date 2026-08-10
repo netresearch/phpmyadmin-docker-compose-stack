@@ -45,12 +45,40 @@ Against a database you already run, leave the demo out and point at it:
 PMA_HOST=your-db-host docker compose up -d app-assets app web
 ```
 
-## Using only the image
+## Two images
 
-The image is useful on its own to anyone who already runs a web server — this
-is how the netresearch.de stack consumes it. php-fpm listens on 9000; the web
-server needs the application tree to serve static files, which `app-assets`
-copies into a shared volume on every start. See
+| Image | What it is |
+|---|---|
+| `ghcr.io/netresearch/phpmyadmin-php-fpm` | php-fpm on 9000, serves no HTTP |
+| `ghcr.io/netresearch/phpmyadmin-nginx` | nginx on 80 with the configuration and the document root baked in |
+
+**Deploy both at the same tag.** They share the document root, which is copied
+from one build stage into both, so mixing tags means running two phpMyAdmin
+versions against each other. Both are built in the same workflow run and
+carry the same tag set for that reason.
+
+Two containers, no mounted files:
+
+```yaml
+services:
+  pma-fpm:
+    image: ghcr.io/netresearch/phpmyadmin-php-fpm:latest
+    environment:
+      PMA_HOST: db
+  pma:
+    image: ghcr.io/netresearch/phpmyadmin-nginx:latest
+    environment:
+      PMA_FPM_UPSTREAM: pma-fpm:9000
+    ports:
+      - "8080:80"
+```
+
+## Using only the php-fpm image
+
+Anyone who already runs a web server can take the php-fpm image alone. It
+listens on 9000, and the web server needs the application tree to serve static
+files, which the `app-assets` service copies into a shared volume on every
+start. See
 [docs/using-the-image-standalone.md](docs/using-the-image-standalone.md).
 
 ## Configuration

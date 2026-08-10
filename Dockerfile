@@ -175,3 +175,49 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["php-fpm", "--nodaemonize"]
+
+# =====================================================================
+# Stage 3: web
+# =====================================================================
+# The php-fpm image above answers FastCGI and serves nothing over HTTP, so
+# every consumer needs a web server in front of it. Shipping that as an
+# image rather than as configuration to mount means a consumer needs two
+# containers and no copied files: netresearch.de would otherwise have had
+# to carry nginx.conf, the template and the snippets in its own repository,
+# and every later consumer another copy of the same three files.
+#
+# The document root is baked in from the same `fetcher` stage the runtime
+# uses, so the static assets and the PHP that renders around them always
+# come from one build. That is also why the two images MUST be deployed at
+# the same tag: mixing them is mixing two phpMyAdmin versions.
+FROM nginx:1.29-alpine AS web
+
+ARG PMA_VERSION=5.2.3
+ARG BUILD_DATE
+ARG VCS_REF
+
+LABEL org.opencontainers.image.title="phpmyadmin-nginx" \
+      org.opencontainers.image.description="nginx fronting phpmyadmin-php-fpm ${PMA_VERSION} — configuration and document root baked in; deploy at the same tag as the php-fpm image" \
+      org.opencontainers.image.url="https://github.com/netresearch/phpmyadmin-docker-compose-stack" \
+      org.opencontainers.image.source="https://github.com/netresearch/phpmyadmin-docker-compose-stack" \
+      org.opencontainers.image.documentation="https://github.com/netresearch/phpmyadmin-docker-compose-stack#readme" \
+      org.opencontainers.image.vendor="Netresearch DTT GmbH" \
+      org.opencontainers.image.licenses="GPL-2.0-only" \
+      org.opencontainers.image.version="${PMA_VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}"
+
+COPY --from=fetcher /app /var/www/html
+COPY config/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY config/nginx/templates/ /etc/nginx/templates/
+COPY config/nginx/snippets/ /etc/nginx/snippets/
+
+# Where php-fpm is reachable. The template is rendered by the nginx
+# entrypoint through envsubst, so this is an ordinary environment variable
+# rather than a build-time decision.
+ENV PMA_FPM_UPSTREAM=app:9000
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/bin/sh", "-c", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
