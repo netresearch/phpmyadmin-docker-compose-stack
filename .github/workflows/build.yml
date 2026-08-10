@@ -94,6 +94,11 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
+          # Named explicitly. Without it Docker builds the LAST stage in the
+          # Dockerfile, and adding the web stage after runtime silently turned
+          # this build into the nginx one - php-fpm:latest was published as
+          # nginx until the smoke test on main caught it on /bin/bash.
+          target: runtime
           # A pull request builds one architecture and keeps it local: `--load`
           # cannot import a manifest list, so asking for both there fails with
           # "docker exporter does not currently support exporting manifest
@@ -116,6 +121,21 @@ jobs:
           # `--load` on pull requests is not.
           sbom: ${{ github.event_name != 'pull_request' }}
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+
+      # The smoke test would have caught a swapped image, but it is a separate
+      # job and the pull-request build never leaves this runner, so it only
+      # runs on main - which is where the wrong image had already been
+      # published. This asserts the identity of what was just built, in the
+      # job that builds it, where a missing `target:` actually goes wrong.
+      - name: The image is php-fpm, not the web stage
+        if: github.event_name == 'pull_request'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag="$(printf '%s\n' "$TAGS" | head -n1)"
+          docker run --rm --entrypoint sh "$tag" -c \
+            'command -v php-fpm >/dev/null && test -x /bin/bash && ! command -v nginx >/dev/null'
 
       - name: Attest the build
         if: github.event_name != 'pull_request'
@@ -165,6 +185,16 @@ jobs:
             VCS_REF=${{ github.sha }}
           sbom: ${{ github.event_name != 'pull_request' }}
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+
+      - name: The web image is nginx, not the runtime stage
+        if: github.event_name == 'pull_request'
+        env:
+          TAGS: ${{ steps.meta-web.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag="$(printf '%s\n' "$TAGS" | head -n1)"
+          docker run --rm --entrypoint sh "$tag" -c \
+            'command -v nginx >/dev/null && ! command -v php-fpm >/dev/null'
 
       - name: Attest the build (web)
         if: github.event_name != 'pull_request'
