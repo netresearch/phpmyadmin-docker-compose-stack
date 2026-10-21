@@ -19,6 +19,7 @@ on:
       - '**.md'
   pull_request:
   workflow_dispatch:
+  merge_group:
 
 env:
   REGISTRY: ghcr.io
@@ -66,10 +67,12 @@ jobs:
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # Pushing only happens from main and the schedule: a pull request must be
-      # able to prove the image still builds without being able to publish it.
+      # Pushing only happens from main and the schedule: a pull request or a
+      # merge queue entry must be able to prove the image still builds without
+      # being able to publish it. A queue entry has no pull-request tag, so it
+      # gets a sha tag for the local image the identity checks run.
       - name: Log in to the registry
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -88,6 +91,7 @@ jobs:
             type=raw,value=${{ steps.version.outputs.pma }},enable={{is_default_branch}}
             type=raw,value=${{ steps.version.outputs.pma }}-{{date 'YYYYMMDD'}},enable={{is_default_branch}}
             type=ref,event=pr
+            type=sha,enable=${{ github.event_name == 'merge_group' }}
 
       - name: Build and push
         id: push
@@ -103,9 +107,9 @@ jobs:
           # cannot import a manifest list, so asking for both there fails with
           # "docker exporter does not currently support exporting manifest
           # lists" before a single layer is built.
-          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          platforms: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+          load: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.variant }}
@@ -119,8 +123,8 @@ jobs:
           # a consumer can ask the registry what is inside the image it pulled.
           # Both need an exporter that writes a manifest, which the local
           # `--load` on pull requests is not.
-          sbom: ${{ github.event_name != 'pull_request' }}
-          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+          provenance: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' && 'mode=max' || 'false' }}
 
       # The smoke test would have caught a swapped image, but it is a separate
       # job and the pull-request build never leaves this runner, so it only
@@ -128,7 +132,7 @@ jobs:
       # published. This asserts the identity of what was just built, in the
       # job that builds it, where a missing `target:` actually goes wrong.
       - name: The image is php-fpm, not the web stage
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
@@ -138,7 +142,7 @@ jobs:
             'command -v php-fpm >/dev/null && test -x /bin/bash && ! command -v nginx >/dev/null'
 
       - name: Attest the build
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -161,6 +165,7 @@ jobs:
             type=raw,value=${{ steps.version.outputs.pma }},enable={{is_default_branch}}
             type=raw,value=${{ steps.version.outputs.pma }}-{{date 'YYYYMMDD'}},enable={{is_default_branch}}
             type=ref,event=pr
+            type=sha,enable=${{ github.event_name == 'merge_group' }}
 
       - name: Build and push (web)
         id: push-web
@@ -168,9 +173,9 @@ jobs:
         with:
           context: .
           target: web
-          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          platforms: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+          load: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}
           # Same cache scope as the runtime build: both share the fetcher
@@ -183,11 +188,11 @@ jobs:
             ROLLING_DEPS=${{ matrix.rolling }}
             BUILD_DATE=${{ github.event.repository.updated_at }}
             VCS_REF=${{ github.sha }}
-          sbom: ${{ github.event_name != 'pull_request' }}
-          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+          provenance: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' && 'mode=max' || 'false' }}
 
       - name: The web image is nginx, not the runtime stage
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         env:
           TAGS: ${{ steps.meta-web.outputs.tags }}
         run: |
@@ -197,7 +202,7 @@ jobs:
             'command -v nginx >/dev/null && ! command -v php-fpm >/dev/null'
 
       - name: Attest the build (web)
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}
@@ -210,7 +215,7 @@ jobs:
   smoke-test:
     name: smoke test (${{ matrix.variant }})
     needs: build
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     permissions:
       contents: read
