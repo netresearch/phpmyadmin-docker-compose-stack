@@ -58,6 +58,7 @@ services:
       PMA_HOST: db
       PMA_ABSOLUTE_URI: https://pma.example.org/
       PMA_BLOWFISH_SECRET: ${PMA_BLOWFISH_SECRET}
+      UPLOAD_LIMIT: ${UPLOAD_LIMIT:-256M}
     volumes:
       - pma-tmp:/var/www/html/tmp
     restart: unless-stopped
@@ -69,6 +70,7 @@ services:
       pma: { condition: service_healthy }
     environment:
       PMA_FPM_UPSTREAM: pma:9000
+      UPLOAD_LIMIT: ${UPLOAD_LIMIT:-256M}
     volumes:
       - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./config/nginx/templates:/etc/nginx/templates:ro
@@ -82,9 +84,12 @@ volumes:
 ```
 
 Take `config/nginx/` from this repository as it is; `PMA_FPM_UPSTREAM` and
-`UPLOAD_LIMIT` are the only values in it that change per deployment. Give the
-web container the same `UPLOAD_LIMIT` as the app, or nginx rejects a large
-import before PHP sees it.
+`UPLOAD_LIMIT` are the only values in it that change per deployment. Both must
+be set on the web container: the stock nginx image renders the template with
+envsubst, which leaves an unset variable in place, and nginx then refuses the
+configuration. Give it the same `UPLOAD_LIMIT` as the app, or nginx rejects a
+large import before PHP sees it. The `phpmyadmin-nginx` image sets both
+defaults itself.
 
 ## Coming from the upstream single-container image
 
