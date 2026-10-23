@@ -93,6 +93,7 @@ services:
         condition: service_healthy
     environment:
       PMA_FPM_UPSTREAM: ${PMA_FPM_UPSTREAM:-app:9000}
+      UPLOAD_LIMIT: ${UPLOAD_LIMIT:-256M}
     ports:
       - "${PMA_HTTP_PORT:-8080}:8080"
     volumes:

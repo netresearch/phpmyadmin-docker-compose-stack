@@ -17,9 +17,10 @@ server {
 
     include /etc/nginx/snippets/security-headers.conf;
 
-    # phpMyAdmin ships large translation and library trees; the import path
-    # takes whatever upload_max_filesize allows.
-    client_max_body_size 256M;
+    # Same limit as php-fpm's upload_max_filesize and post_max_size, which the
+    # app image derives from UPLOAD_LIMIT too: a larger import must get past
+    # nginx before PHP can accept it. nginx reads 256M, 1G or 500m alike.
+    client_max_body_size ${UPLOAD_LIMIT};
 
     location / {
         try_files $uri $uri/ =404;

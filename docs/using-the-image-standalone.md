@@ -81,8 +81,10 @@ volumes:
   pma-html:
 ```
 
-Take `config/nginx/` from this repository as it is; `PMA_FPM_UPSTREAM` is the
-only value in it that changes per deployment.
+Take `config/nginx/` from this repository as it is; `PMA_FPM_UPSTREAM` and
+`UPLOAD_LIMIT` are the only values in it that change per deployment. Give the
+web container the same `UPLOAD_LIMIT` as the app, or nginx rejects a large
+import before PHP sees it.
 
 ## Coming from the upstream single-container image
 
