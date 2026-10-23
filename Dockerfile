@@ -221,6 +221,10 @@ COPY config/nginx/snippets/ /etc/nginx/snippets/
 # rather than a build-time decision.
 ENV PMA_FPM_UPSTREAM=app:9000
 
+# Request body limit, the counterpart of UPLOAD_LIMIT in the php-fpm image.
+# Set both containers to the same value.
+ENV UPLOAD_LIMIT=256M
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

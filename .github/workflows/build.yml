@@ -239,6 +239,9 @@ jobs:
         run: |
           set -euo pipefail
           cp .env.example .env
+          # Not the default, so a later step can tell the value reached nginx.
+          sed -i 's/^UPLOAD_LIMIT=.*/UPLOAD_LIMIT=300M/' .env
+          grep -qx 'UPLOAD_LIMIT=300M' .env
           {
             echo "MARIADB_ROOT_PASSWORD=smoke-test-only"
             echo "PMA_BLOWFISH_SECRET=smoketestsmoketestsmoketest12345"
@@ -278,6 +281,14 @@ jobs:
             exit 1
           fi
           echo "logged in against the database"
+
+      - name: nginx and php-fpm share the upload limit
+        run: |
+          set -euo pipefail
+          docker compose exec -T web grep -q 'client_max_body_size 300M;' /etc/nginx/conf.d/default.conf \
+            || { echo "::error::nginx did not take UPLOAD_LIMIT"; docker compose exec -T web grep -n client_max_body_size /etc/nginx/conf.d/default.conf; exit 1; }
+          limit=$(docker compose exec -T app php -r 'echo ini_get("upload_max_filesize");')
+          [ "$limit" = "300M" ] || { echo "::error::php-fpm upload_max_filesize is $limit"; exit 1; }
 
       - name: php-fpm endpoints are not public
         run: |
