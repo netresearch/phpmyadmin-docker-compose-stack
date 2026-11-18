@@ -190,11 +190,12 @@ CMD ["php-fpm", "--nodaemonize"]
 # uses, so the static assets and the PHP that renders around them always
 # come from one build. That is also why the two images MUST be deployed at
 # the same tag: mixing them is mixing two phpMyAdmin versions.
-# The unprivileged variant rather than nginx:alpine: the stock image runs
-# its master process as root, which the php-fpm stage above deliberately
-# does not, and SonarCloud flags it as docker:S6471. This one runs as uid
-# 101 throughout, which is why the server block listens on 8080.
-FROM nginxinc/nginx-unprivileged:1.31-alpine AS web
+# The entrypoint renders the supplied template in conf.d. Run it and nginx as
+# the same unprivileged uid used by earlier releases.
+FROM nginx:1.31.9-alpine AS web
+
+RUN chown nginx:nginx /etc/nginx/conf.d /etc/nginx/conf.d/default.conf /var/cache/nginx
+USER 101
 
 ARG PMA_VERSION=5.2.3
 ARG BUILD_DATE
