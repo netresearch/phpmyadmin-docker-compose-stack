@@ -64,7 +64,7 @@ services:
     restart: unless-stopped
 
   pma-web:
-    image: nginx:1.29-alpine
+    image: nginx:1.31.9-alpine
     depends_on:
       pma-assets: { condition: service_completed_successfully }
       pma: { condition: service_healthy }

@@ -84,7 +84,7 @@ services:
       - no-new-privileges:true
 
   web:
-    image: nginx:${NGINX_VERSION:-1.29-alpine}
+    image: nginx:${NGINX_VERSION:-1.31.9-alpine}
     logging: *default-logging
     depends_on:
       app-assets:
